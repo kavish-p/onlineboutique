@@ -1,3 +1,224 @@
-test-job:
+stages:
+  - setup
+  - build-deploy
+  - test
+  - performance
+
+variables:
+  OPENSHIFT_API: https://api.okd.lab.mez9.local:6443
+  REGISTRY_PATH: 10.168.0.76:9000/dev-registry
+  VAULT_ADDR: http://10.168.0.80:8200
+  NEXUS_USER: $NEXUS_USER
+  NEXUS_PASSWORD: $NEXUS_PASSWORD
+  OC_TOKEN: $OC_DEV_TOKEN
+  OC_NAMESPACE: sample-app
+  PERFORMANCE_TEST:
+    value: "0"
+    description: "Change value to 1 in order to execute performance test. Build and deployment of microservices will not be performed"
+
+setup-env:
+  stage: setup
   script:
-    - echo Hello
+    - oc login --insecure-skip-tls-verify --token ${OC_TOKEN} ${OPENSHIFT_API}
+    - oc project ${OC_NAMESPACE}
+    - oc create secret docker-registry nexus-secret --docker-server=http://10.168.0.76:9000 --docker-username=${NEXUS_USER} --docker-password=${NEXUS_PASSWORD} || true
+    - podman login ${REGISTRY_PATH} -u ${NEXUS_USER} -p ${NEXUS_PASSWORD}
+    - export VAULT_ADDR=${VAULT_ADDR}
+    - export VAULT_TOKEN="$(vault write -field=token auth/jwt/login role=myproject-production jwt=$CI_JOB_JWT)"
+    - export USER="$(vault kv get -field=user ops/data/registry)"
+    - echo $USER
+
+frontend:
+  stage: build-deploy
+  variables:
+    MICROSERVICE: frontend
+  only:
+    variables:
+      - $PERFORMANCE_TEST == "0"
+    changes:
+      - src/frontend/**/*
+  trigger:
+    include: microservice_pipeline.yml
+    strategy: depend
+
+# adservice-sonar:
+#   stage: sonarqube
+#   script:
+#     - cd adservice
+#     - ./gradlew sonarqube -Dsonar.projectKey=adservice -Dsonar.host.url=${SONAR_HOST_URL} -Dsonar.login=${SONAR_TOKEN}
+
+semgrep:
+  image: returntocorp/semgrep
+  tags:
+    - openshift
+  script:
+    - cd src/adservice
+    - semgrep ci
+
+adservice:
+  stage: build-deploy
+  variables:
+    MICROSERVICE: adservice
+  only:
+    variables:
+      - $PERFORMANCE_TEST == "0"
+    changes:
+      - src/adservice/**/*
+  trigger:
+    include: microservice_pipeline.yml
+    strategy: depend
+
+cartservice:
+  stage: build-deploy
+  variables:
+    MICROSERVICE: cartservice
+  only:
+    variables:
+      - $PERFORMANCE_TEST == "0"
+    changes:
+      - src/cartservice/**/*
+  trigger:
+    include: microservice_pipeline.yml
+    strategy: depend
+
+checkoutservice:
+  stage: build-deploy
+  variables:
+    MICROSERVICE: checkoutservice
+  only:
+    variables:
+      - $PERFORMANCE_TEST == "0"
+    changes:
+      - src/checkoutservice/**/*
+  trigger:
+    include: microservice_pipeline.yml
+    strategy: depend
+
+currencyservice:
+  stage: build-deploy
+  variables:
+    MICROSERVICE: currencyservice
+  only:
+    variables:
+      - $PERFORMANCE_TEST == "0"
+    changes:
+      - src/currencyservice/**/*
+  trigger:
+    include: microservice_pipeline.yml
+    strategy: depend
+
+emailservice:
+  stage: build-deploy
+  variables:
+    MICROSERVICE: emailservice
+  only:
+    variables:
+      - $PERFORMANCE_TEST == "0"
+    changes:
+      - src/emailservice/**/*
+  trigger:
+    include: microservice_pipeline.yml
+    strategy: depend
+
+loadgenerator:
+  stage: build-deploy
+  variables:
+    MICROSERVICE: loadgenerator
+  only:
+    variables:
+      - $PERFORMANCE_TEST == "0"
+    changes:
+      - src/loadgenerator/**/*
+  trigger:
+    include: microservice_pipeline.yml
+    strategy: depend
+
+paymentservice:
+  stage: build-deploy
+  variables:
+    MICROSERVICE: paymentservice
+  only:
+    variables:
+      - $PERFORMANCE_TEST == "0"
+    changes:
+      - src/paymentservice/**/*
+  trigger:
+    include: microservice_pipeline.yml
+    strategy: depend
+
+productcatalogservice:
+  stage: build-deploy
+  variables:
+    MICROSERVICE: productcatalogservice
+  only:
+    variables:
+      - $PERFORMANCE_TEST == "0"
+    changes:
+      - src/productcatalogservice/**/*
+  trigger:
+    include: microservice_pipeline.yml
+    strategy: depend
+
+recommendationservice:
+  stage: build-deploy
+  variables:
+    MICROSERVICE: recommendationservice
+  only:
+    variables:
+      - $PERFORMANCE_TEST == "0"
+    changes:
+      - src/recommendationservice/**/*
+  trigger:
+    include: microservice_pipeline.yml
+    strategy: depend
+
+shippingservice:
+  stage: build-deploy
+  variables:
+    MICROSERVICE: shippingservice
+  only:
+    variables:
+      - $PERFORMANCE_TEST == "0"
+    changes:
+      - src/shippingservice/**/*
+  trigger:
+    include: microservice_pipeline.yml
+    strategy: depend
+
+selenium-test:
+  stage: test
+  tags:
+    - selenium
+  script:
+    - cd tests
+    - pytest -v --alluredir=allure_results
+    - allure generate -c allure_results -o allure-report
+  artifacts:
+    when: always
+    paths:
+      - tests/allure_results
+      - tests/allure-report
+    expire_in: 1 day
+  allow_failure: true
+
+pages:
+  stage: test
+  script:
+    - cp -r tests/allure-report/* public
+  artifacts:
+    paths:
+      - public
+    expire_in: 30 days
+  needs:
+    - job: selenium-test
+
+performance-test:
+  stage: performance
+  only:
+    variables:
+      - $PERFORMANCE_TEST == "1"
+  script:
+    - k6 run tests/perftest.js --summary-export=load-performance.json
+  artifacts:
+    reports:
+      load_performance: load-performance.json
