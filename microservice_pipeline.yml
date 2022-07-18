@@ -1,0 +1,37 @@
+variables:
+  MICROSERVICE: "default-value"
+
+microservice-build:
+  stage: build
+  only:
+    variables:
+      - $MICROSERVICE != "cartservice"
+  script:
+    - |
+      echo ${CI_COMMIT_SHORT_SHA}
+      cd src/${MICROSERVICE}
+      ls -l
+      podman --storage-opt ignore_chown_errors=true build -t ${REGISTRY_PATH}/${MICROSERVICE}:${CI_COMMIT_SHORT_SHA} -t ${REGISTRY_PATH}/${MICROSERVICE}:latest .
+      podman --storage-opt ignore_chown_errors=true push ${REGISTRY_PATH}/${MICROSERVICE}:${CI_COMMIT_SHORT_SHA}
+      podman --storage-opt ignore_chown_errors=true push ${REGISTRY_PATH}/${MICROSERVICE}:latest
+
+cartservice-build:
+  stage: build
+  only:
+    variables:
+      - $MICROSERVICE == "cartservice"
+  script:
+    - |
+      echo ${CI_COMMIT_SHORT_SHA}
+      cd src/${MICROSERVICE}/src
+      ls -l
+      podman --storage-opt ignore_chown_errors=true build -t ${REGISTRY_PATH}/${MICROSERVICE}:${CI_COMMIT_SHORT_SHA} -t ${REGISTRY_PATH}/${MICROSERVICE}:latest .
+      podman --storage-opt ignore_chown_errors=true push ${REGISTRY_PATH}/${MICROSERVICE}:${CI_COMMIT_SHORT_SHA}
+      podman --storage-opt ignore_chown_errors=true push ${REGISTRY_PATH}/${MICROSERVICE}:latest
+
+microservice-deploy:
+  stage: deploy
+  script:
+    - envsubst < kubernetes-manifests/${MICROSERVICE}.yaml > kubernetes-manifests/${MICROSERVICE}-updated.yaml
+    - oc apply -f kubernetes-manifests/${MICROSERVICE}-updated.yaml
+    - oc wait pods -l app=${MICROSERVICE} --for condition=Ready --timeout=90s
